@@ -96,6 +96,9 @@
     (define-key map (kbd "C-f") 'phi-search-maybe-forward-char)
     (define-key map (kbd "C-l") 'phi-search-recenter-top-bottom)
     (define-key map (kbd "C-w") 'phi-search-yank-word)
+    (define-key map (kbd "C->") 'phi-search-add-cursor-next)
+    (define-key map (kbd "C-<") 'phi-search-add-cursor-prev)
+    (define-key map (kbd "C-c C-<") 'phi-search-add-cursor-all)
     (define-key map (kbd "RET") 'phi-search-complete)
     map)
   "keymap for the phi-search prompt buffers"
@@ -124,6 +127,10 @@
 (defvar phi-search--target nil
   "the target (window . buffer) which this prompt buffer is for")
 (make-variable-buffer-local 'phi-search--target)
+
+(defvar phi-search--mc-mode nil
+  "whether multi-cursor mode was active when the search started")
+(make-variable-buffer-local 'phi-search--mc-mode)
 
 ;; * utilities
 
@@ -328,6 +335,11 @@ returns the position of the item, or nil for failure."
     (setq phi-search--original-region
           (buffer-substring (region-beginning) (region-end)))
     (deactivate-mark))
+  ;; remember if we are in a multi-cursor mode
+  (setq phi-search--mc-mode nil)
+  (when (functionp 'mc/all-fake-cursors)
+    (when (not (null (mc/all-fake-cursors)))
+      (setq phi-search--mc-mode t)))
   ;; make prompt buffer and window
   (let ((target (cons (selected-window) (current-buffer)))
         (str (or phi-search--original-region "")))
@@ -438,7 +450,8 @@ if optional arg command is non-nil, call it after that."
   (interactive)
   (phi-search--with-target-buffer
    (let ((command
-          (cond ((null phi-search--selection)
+          (cond ((or (null phi-search--selection)
+		     (not phi-search--mc-mode))
                  (phi-search--command-do-nothing))
                 ((string= query phi-search--original-region)
                  (phi-search--command-do-search
@@ -454,6 +467,34 @@ if optional arg command is non-nil, call it after that."
    (save-excursion (phi-search--delete-overlays)))
   (phi-search--clean)
   (when cmd (call-interactively cmd)))
+
+(defun phi-search--add-cursor-and (command)
+  (when (functionp 'mc/create-fake-cursor-at-point)
+    (phi-search--with-target-buffer
+     (mc/create-fake-cursor-at-point)
+     (mc/maybe-multiple-cursors-mode))
+    (funcall command)))
+
+(defun phi-search-add-cursor-next ()
+  (interactive)
+  (phi-search--add-cursor-and 'phi-search-again-or-next))
+
+(defun phi-search-add-cursor-prev ()
+  (interactive)
+  (phi-search--add-cursor-and 'phi-search-again-or-previous))
+
+(defun phi-search-add-cursor-all ()
+  (interactive)
+  (when (functionp 'mc/create-fake-cursor-at-point)
+    (phi-search--with-target-buffer
+     (save-excursion
+       (mapc (lambda (overlay)
+	       (goto-char (overlay-end overlay))
+	       (mc/create-fake-cursor-at-point))
+	     (rest phi-search--overlays)))
+     (mc/maybe-multiple-cursors-mode)
+     (goto-char (overlay-end (first phi-search--overlays))))
+    (phi-search-complete)))
 
 ;; * phi-search-maybe-xxxx
 
